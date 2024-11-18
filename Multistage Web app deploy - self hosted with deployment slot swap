@@ -1,0 +1,160 @@
+
+trigger:
+- none
+
+# Run Pipeline on Self Hosted Agent
+pool:
+  name: Terraform Agent
+  demands:
+   - agent.name -equals Terraform server
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+
+
+stages:
+  
+  # Stage to Build the solution on Self hosted agent
+  - stage: "Build"
+    jobs:
+      - job: "BuildArtifact"
+        steps:
+
+        - task: NuGetToolInstaller@1
+          displayName: Install Nuget Tools 
+
+        - task: NuGetCommand@2
+          displayName: Restore Dependencies
+          inputs:
+            restoreSolution: '$(solution)'
+
+        - task: VSBuild@1
+          displayName: Build Solution
+          inputs:
+            solution: '$(solution)'
+            msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
+            platform: '$(buildPlatform)'
+            configuration: '$(buildConfiguration)'
+          
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Solution
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: 'drop'
+            publishLocation: 'pipeline'
+      
+
+  # Deploy to Stage Environment
+  - stage: "StageDeployment"
+    dependsOn: "Build"
+    jobs:
+      - job: "DeployToStage"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: downlaod artifact
+            inputs:
+              buildType: 'current'
+              artifactName: 'drop'
+              targetPath: '$(Pipeline.Workspace)/drop'  # Downlaod artifact in specific pipeline workspace directoty
+          
+          # **** OR *******  
+
+          # - download: current
+          #   displayName: Download Artifact
+          #   artifact: drop
+          
+          - task: AzureRmWebAppDeployment@4
+            displayName: Deploy to Stage Environment
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Azure-connect'
+              appType: 'webApp'
+              WebAppName: 'Ajit-Web-App-Stage'
+              packageForLinux: '$(Pipeline.Workspace)/drop/**/*.zip'  # download artifact from same directory
+          
+
+  # Deploy to Production Environment
+  - stage: "ProductionDeployment"
+    dependsOn: "StageDeployment"
+    jobs:
+      - deployment: 'DeployToProduction'    # Deployment task by default download artifact so no need of explicit download artifact task
+        environment: 'WebappInfrastructure'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                # - task: DownloadPipelineArtifact@2
+                #   displayName: downlaod artifact
+                #   inputs:
+                #     buildType: 'current'
+                #     artifactName: 'drop'
+                #     targetPath: '$(Pipeline.Workspace)/drop'
+                  
+                # **** OR *******  
+
+                # - download: current
+                #   displayName: Download Artifact
+                #   artifact: drop
+                
+                - task: AzureRmWebAppDeployment@4
+                  displayName: Deploy to Production Environment
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: 'Azure-connect'
+                    appType: 'webApp'
+                    WebAppName: 'Ajit-Web-App-Production'
+                    packageForLinux: '$(Pipeline.Workspace)/drop/**/*.zip'  # download artifact from same directory
+                    
+    
+  # Deploy to Global Environment with deployment slot
+  - stage: "GlobalDeployment"
+    dependsOn: "ProductionDeployment"
+    jobs:
+
+      # Job to Deploy to staging slot
+      - job: "DeployToGlobalStaging"
+        displayName: Deploy to Global Stage Deployment Slot
+        steps:
+          - task: AzureRmWebAppDeployment@4    # Deploy the application to Staging slot of Global environment first with below task
+            displayName: Deploy to Global stage Deployment slot
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Azure-connect'
+              appType: 'webApp'
+              WebAppName: 'Ajit-web-app-Global'
+              deployToSlotOrASE: true
+              ResourceGroupName: 'Ajit-RG'
+              SlotName: 'global-stage'
+              packageForLinux: '$(Pipeline.Workspace)/drop/**/*.zip'
+
+      # Job to Get approval before swapping stagging slot with production slot
+      # Manual validation task is run on server pool so it is important to define
+      - job: "Approval"
+        displayName: Waiting for External Approval
+        pool: server
+        steps:
+          - task: ManualValidation@1
+            displayName: Approve to deploy on production
+            timeoutInMinutes: 10 # task times out in 1 day
+            inputs:
+              notifyUsers: |
+                ajitkumbhar2954@gmail.com
+              instructions: 'Please validate the build configuration and resume'
+              onTimeout: 'resume'
+            
+      # Job to swap slot with production
+      - job: "SwapSlots"
+        displayName: Swap the Staging slot with production
+        steps:
+          - task: AzureAppServiceManage@0
+            displayName: swap the slot with GLobal production
+            inputs:
+              azureSubscription: 'Azure-connect'
+              Action: 'Swap Slots'
+              WebAppName: 'Ajit-web-app-Global'
+              ResourceGroupName: 'Ajit-RG'
+              SourceSlot: 'global-stage'
+            
