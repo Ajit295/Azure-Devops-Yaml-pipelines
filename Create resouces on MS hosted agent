@@ -1,0 +1,100 @@
+
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+- group: TerraformCredentials
+
+stages:
+  - stage: tfvalidate
+    jobs:
+      - job: validate
+        continueOnError: false
+        steps:  
+        
+          - task: TerraformInstaller@1
+            displayName: Terraform install
+            inputs:
+              terraformVersion: 'latest'
+
+  # save service principle relaed variables in Variable group
+  # Terraform will export those variable s as environments variables in script
+  # Define the variable in as script task like below
+          - script: |
+              echo "Setting Terraform environment variables..."
+              export ARM_CLIENT_ID=$(client_id)
+              export ARM_CLIENT_SECRET=$(client_secret)
+              export ARM_SUBSCRIPTION_ID=$(subscription_id)
+              export ARM_TENANT_ID=$(tenant_id)
+            displayName: 'Set Terraform Environment Variables'
+
+          - task: TerraformTaskV4@4
+            displayName: Init
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: 'Azure-connect'
+              backendAzureRmResourceGroupName: 'Ajit-RG'
+              backendAzureRmStorageAccountName: 'storgeaccount23091998343'
+              backendAzureRmContainerName: 'terraform-state'
+              backendAzureRmKey: 'terraform.tfstate'
+              
+          - task: TerraformTaskV4@4
+            displayName: Validate
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+  
+  - stage: tfdeploy
+    condition: succeeded('tfvalidate')
+    dependsOn: tfvalidate
+    jobs:
+      - job: apply
+        steps: 
+           - task: TerraformInstaller@1
+             displayName: Terraform install
+             inputs:
+              terraformVersion: 'latest'
+            
+           - script: |
+              echo "Setting Terraform environment variables..."
+              export ARM_CLIENT_ID=$(client_id)
+              export ARM_CLIENT_SECRET=$(client_secret)
+              export ARM_SUBSCRIPTION_ID=$(subscription_id)
+              export ARM_TENANT_ID=$(tenant_id)
+             displayName: 'Set Terraform Environment Variables'
+
+
+           - task: TerraformTaskV4@4
+             displayName: Init
+             inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: 'Azure-connect'
+              backendAzureRmResourceGroupName: 'Ajit-RG'
+              backendAzureRmStorageAccountName: 'storgeaccount23091998343'
+              backendAzureRmContainerName: 'terraform-state'
+              backendAzureRmKey: 'terraform.tfstate'
+
+           - task: TerraformTaskV4@4
+             displayName: Plan
+             inputs:
+               provider: 'azurerm'
+               command: 'plan'
+               environmentServiceNameAzureRM: 'Azure-connect'
+               commandOptions: '-input=false'
+
+           - task: TerraformTaskV4@4
+             displayName: Apply
+             inputs:
+               provider: 'azurerm'
+               command: 'apply'
+               environmentServiceNameAzureRM: 'Azure-connect'
