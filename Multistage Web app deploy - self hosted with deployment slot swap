@@ -133,6 +133,7 @@ stages:
       # Job to Get approval before swapping stagging slot with production slot
       # Manual validation task is run on server pool so it is important to define
       - job: "Approval"
+        dependsOn: "DeployToGlobalStaging"
         displayName: Waiting for External Approval
         pool: server
         steps:
@@ -147,6 +148,7 @@ stages:
             
       # Job to swap slot with production
       - job: "SwapSlots"
+        dependsOn: "Approval"
         displayName: Swap the Staging slot with production
         steps:
           - task: AzureAppServiceManage@0
