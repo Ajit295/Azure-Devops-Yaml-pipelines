@@ -1,0 +1,111 @@
+
+trigger:
+- none
+
+# Run Pipeline on Self Hosted Agent
+pool:
+  name: Terraform Agent
+  demands:
+   - agent.name -equals Terraform server
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+
+
+stages:
+  
+  # Stage to Build the solution on Self hosted agent
+  - stage: "Build"
+    jobs:
+      - job: "BuildArtifact"
+        steps:
+
+        - task: NuGetToolInstaller@1
+          displayName: Install Nuget Tools 
+
+        - task: NuGetCommand@2
+          displayName: Restore Dependencies
+          inputs:
+            restoreSolution: '$(solution)'
+
+        - task: VSBuild@1
+          displayName: Build Solution
+          inputs:
+            solution: '$(solution)'
+            msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
+            platform: '$(buildPlatform)'
+            configuration: '$(buildConfiguration)'
+          
+        - task: PublishPipelineArtifact@1
+          displayName: Publish Solution
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: 'drop'
+            publishLocation: 'pipeline'
+      
+
+  # Deploy to Stage Environment
+  - stage: "StageDeployment"
+    dependsOn: "Build"
+    jobs:
+      - job: "DeployToStage"
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: downlaod artifact
+            inputs:
+              buildType: 'current'
+              artifactName: 'drop'
+              # Downlaod artifact in specific pipeline workspace directoty to availd multiple artifact getting downloaded in same directory
+              targetPath: '$(Pipeline.Workspace)/drop'
+          
+          # **** OR *******  
+
+          # - download: current
+          #   displayName: Download Artifact
+          #   artifact: drop
+          
+          - task: AzureRmWebAppDeployment@4
+            displayName: Deploy to Stage Environment
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Azure-connect'
+              appType: 'webApp'
+              WebAppName: 'Ajit-Web-App-Stage'
+              packageForLinux: '$(Pipeline.Workspace)/drop/**/*.zip'  # download artifact from same directory
+
+  
+
+  # Deploy to Production Environment
+  - stage: "ProductionDeployment"
+    dependsOn: "StageDeployment"
+    jobs:
+      - deployment: 'DeployToProduction'    # Deployment task by default download artifact so no need of explicit download artifact task
+        environment: 'WebappInfrastructure'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                # - task: DownloadPipelineArtifact@2
+                #   displayName: downlaod artifact
+                #   inputs:
+                #     buildType: 'current'
+                #     artifactName: 'drop'
+                #     targetPath: '$(Pipeline.Workspace)'
+                  
+                # **** OR *******  
+
+                # - download: current
+                #   displayName: Download Artifact
+                #   artifact: drop
+                
+                - task: AzureRmWebAppDeployment@4
+                  displayName: Deploy to Production Environment
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: 'Azure-connect'
+                    appType: 'webApp'
+                    WebAppName: 'Ajit-Web-App-Production'
+                    packageForLinux: '$(Pipeline.Workspace)/drop/**/*.zip'  # download artifact from same directory
