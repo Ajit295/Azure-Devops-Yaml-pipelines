@@ -1,0 +1,63 @@
+
+trigger:
+- none
+
+pool:
+  vmImage: ubuntu-latest
+
+# Fetch provider variables from Variable group
+#variables:
+#- group: TerraformCredentials
+
+stages:
+  
+  # Destroy the resources created by terraform
+  - stage: tfdestroy
+    jobs:
+      - job: destroy
+        steps: 
+
+          # Install Terraform on Hosted agent
+           - task: TerraformInstaller@1
+             displayName: Terraform install
+             inputs:
+              terraformVersion: 'latest'
+           
+          # Export provider variables as Environment variable in yaml pipeline using script task
+          # - script: |
+              #echo "Setting Terraform environment variables..."
+              #export ARM_CLIENT_ID=$(client_id)
+              #export ARM_CLIENT_SECRET=$(client_secret)
+              #export ARM_SUBSCRIPTION_ID=$(subscription_id)
+              #export ARM_TENANT_ID=$(tenant_id)
+             #displayName: 'Set Terraform Environment Variables'
+
+          # Initaite terraform to install provider files and dependencies 
+          # Also defined backed Azure storge accouunt to store terraform.state file to manage centrally
+           - task: TerraformTaskV4@4
+             displayName: Init
+             inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: 'Azure-connect'
+              backendAzureRmResourceGroupName: 'Ajit-RG'
+              backendAzureRmStorageAccountName: 'storgeaccount23091998343'
+              backendAzureRmContainerName: 'terraform-state'
+              backendAzureRmKey: 'terraform.tfstate'
+
+          # Create plan of the resources to be created
+           - task: TerraformTaskV4@4
+             displayName: Plan
+             inputs:
+               provider: 'azurerm'
+               command: 'plan'
+               environmentServiceNameAzureRM: 'Azure-connect'
+               commandOptions: '-input=false'   # To stop the default behaviour of terraform to wait for user input
+
+          # Destoy the terraform resources 
+           - task: TerraformTaskV4@4
+             displayName: Destroy
+             inputs:
+               provider: 'azurerm'
+               command: 'destroy'
+               environmentServiceNameAzureRM: 'Azure-connect'
